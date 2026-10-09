@@ -116,17 +116,18 @@ class BootImage:
         self.ramdisk = bytes(d[off : off + self.ramdisk_size]) if self.ramdisk_size else b""
         off += align(self.ramdisk_size, self.page_size)
 
-        if self.header_version == 2 and not self.has_v2_magic:
-            # Probe the Xiaomi/SM7150 layout instead of trusting the field: only
-            # accept it when an FDT of exactly that declared length sits right
-            # after the ramdisk. This runs here because it needs the payload
-            # offsets computed above.
-            candidate = u32(d, OFF_XIAOMI_DTB_SIZE)
-            if 0 < candidate < len(d) - off and d[off : off + 4] == FDT_MAGIC:
-                if int.from_bytes(d[off + 4 : off + 8], "big") == candidate:
-                    self.xiaomi_dtb = True
-                    self.dtb_size = candidate
-                    self.xiaomi_header_size = u32(d, OFF_XIAOMI_HEADER_SIZE)
+        # Probe the Xiaomi/SM7150 layout instead of trusting the field: only
+        # accept it when an FDT of exactly that declared length sits right
+        # after the ramdisk. Independent of header_version - the stock courbet
+        # image is version 2 while the images this project produces are
+        # version 0, and both carry the tree the same way.
+        # This runs here because it needs the payload offsets computed above.
+        candidate = u32(d, OFF_XIAOMI_DTB_SIZE)
+        if 0 < candidate < len(d) - off and d[off : off + 4] == FDT_MAGIC:
+            if int.from_bytes(d[off + 4 : off + 8], "big") == candidate:
+                self.xiaomi_dtb = True
+                self.dtb_size = candidate
+                self.xiaomi_header_size = u32(d, OFF_XIAOMI_HEADER_SIZE)
 
         self.vendor_ramdisk = b""
         if self.vendor_ramdisk_size:
