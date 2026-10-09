@@ -21,6 +21,7 @@ import struct
 import sys
 
 BOOT_MAGIC = b"ANDROID!"
+FDT_MAGIC = b"\xd0\x0d\xfe\xed"
 BOOT_HEADER_V2_MAGIC = 0x2FFE6506
 BOOT_HEADER_SIZE_V1 = 1648
 
@@ -42,6 +43,14 @@ OFF_ID = 576
 OFF_EXTRA_CMDLINE = 584
 OFF_V2_MAGIC = 1636
 OFF_HEADER_SIZE = 1648
+
+# Xiaomi/SM7150 convention for header_version 2: the v2 header has no DTB size
+# field, so these devices store it in the slots standard mkbootimg would leave
+# unused, and physically place the FDT right after the ramdisk. Verified against
+# a working courbet boot.img: @1644 = 1660 (header size), @1648 = 398043 (DTB
+# size, matching totalsize of the FDT that follows the ramdisk).
+OFF_XIAOMI_HEADER_SIZE = 1644
+OFF_XIAOMI_DTB_SIZE = 1648
 
 PE_MAGIC = b"PE\x00\x00"
 MZ_MAGIC = b"MZ"
@@ -87,10 +96,13 @@ class BootImage:
         self.vendor_ramdisk_size = 0
         self.dtb_size = 0
         self.vendor_tbl_off = 0
+        self.xiaomi_dtb = False
+        self.xiaomi_header_size = 0
         if self.header_version >= 3:
             self.vendor_tbl_off = self.header_version
             self.vendor_ramdisk_size = u32(d, self.vendor_tbl_off)
             self.dtb_size = u32(d, self.vendor_tbl_off + 4)
+        # header_version 2 is handled after the payload offsets are known.
 
         # split into header pages + payloads
         self.header_pages = align(self.header_size, self.page_size) if self.header_version >= 2 else self.page_size
@@ -103,6 +115,18 @@ class BootImage:
         self.ramdisk_size = u32(d, OFF_RAMDISK_SIZE)
         self.ramdisk = bytes(d[off : off + self.ramdisk_size]) if self.ramdisk_size else b""
         off += align(self.ramdisk_size, self.page_size)
+
+        if self.header_version == 2 and not self.has_v2_magic:
+            # Probe the Xiaomi/SM7150 layout instead of trusting the field: only
+            # accept it when an FDT of exactly that declared length sits right
+            # after the ramdisk. This runs here because it needs the payload
+            # offsets computed above.
+            candidate = u32(d, OFF_XIAOMI_DTB_SIZE)
+            if 0 < candidate < len(d) - off and d[off : off + 4] == FDT_MAGIC:
+                if int.from_bytes(d[off + 4 : off + 8], "big") == candidate:
+                    self.xiaomi_dtb = True
+                    self.dtb_size = candidate
+                    self.xiaomi_header_size = u32(d, OFF_XIAOMI_HEADER_SIZE)
 
         self.vendor_ramdisk = b""
         if self.vendor_ramdisk_size:
@@ -166,6 +190,11 @@ class BootImage:
             if self.has_v2_magic:
                 struct.pack_into("<I", head, OFF_V2_MAGIC, BOOT_HEADER_V2_MAGIC)
                 struct.pack_into("<I", head, OFF_HEADER_SIZE, self.header_size)
+            elif self.xiaomi_dtb:
+                # Preserve the vendor convention: the loader reads the DTB
+                # length from this slot, not from a v2 header field.
+                struct.pack_into("<I", head, OFF_XIAOMI_HEADER_SIZE, self.xiaomi_header_size)
+                struct.pack_into("<I", head, OFF_XIAOMI_DTB_SIZE, len(self.dtb))
 
         out = bytearray(head)
         for blob in (self.kernel, self.ramdisk, self.vendor_ramdisk, self.second, self.dtb):

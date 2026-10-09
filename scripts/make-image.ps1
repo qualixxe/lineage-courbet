@@ -10,14 +10,20 @@
 
 [CmdletBinding()]
 param(
-    [string]$Payload   = "$PSScriptRoot\..\out\UefiPayloadPkg.efi",
-    [string]$StockBoot = "$env:USERPROFILE\Desktop\boot\boot.img",
-    [string]$Output    = "$PSScriptRoot\..\work\boot-uefi.img",
+    [string]$Payload,
+    [string]$StockBoot,
+    [string]$Output,
     [switch]$NoFlash
 )
 
+# $PSScriptRoot is not yet available while param() defaults are evaluated.
 $ErrorActionPreference = 'Stop'
-$root = Resolve-Path "$PSScriptRoot\.."
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$root = Split-Path -Parent $scriptDir
+if (-not $Payload)   { $Payload   = Join-Path $root 'out\UefiPayloadPkg.efi' }
+if (-not $StockBoot) { $StockBoot = Join-Path $env:USERPROFILE 'Desktop\boot\boot.img' }
+if (-not $Output)    { $Output    = Join-Path $root 'work\boot-uefi.img' }
+
 $repack = Join-Path $root 'tools\repack.py'
 
 function Fail($msg) { Write-Host "[FAIL] $msg" -ForegroundColor Red; exit 1 }
