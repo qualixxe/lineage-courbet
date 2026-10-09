@@ -1,0 +1,107 @@
+name: Build UEFI payload (courbet)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/**'
+      - 'patches/**'
+      - '.github/workflows/**'
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pinned so every run builds the exact same upstream tree.
+  EDK2_REPO: https://github.com/tianocore/edk2.git
+  EDK2_SHA: 870158586f14dbf9d57e312ea6ea87141a1b0699
+
+jobs:
+  build:
+    # 22.04 ships Python 3.10; newer distros drop distutils which BaseTools
+    # still relies on.
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cross toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            git \
+            python3 \
+            python3-setuptools \
+            uuid-dev \
+            acpica-tools \
+            gcc-aarch64-linux-gnu
+
+      - name: Cache edk2 clone
+        id: edk2-cache
+        uses: actions/cache@v4
+        with:
+          path: edk2
+          key: edk2-${{ env.EDK2_SHA }}
+
+      - name: Fetch edk2
+        if: steps.edk2-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --filter=blob:none \
+                    --depth 1 --shallow-submodules --recurse-submodules \
+                    "$EDK2_REPO" edk2
+          cd edk2
+          git fetch --depth 1 origin "$EDK2_SHA"
+          git checkout --detach "$EDK2_SHA"
+
+      - name: Report edk2 revision
+        run: git -C edk2 rev-parse HEAD
+
+      - name: Apply courbet patches
+        run: |
+          if compgen -G 'patches/*.patch' > /dev/null; then
+            for p in patches/*.patch; do
+              echo "applying $p"
+              git -C edk2 apply --verbose "$GITHUB_WORKSPACE/$p"
+            done
+          else
+            echo "no patches yet - building upstream payload as-is"
+          fi
+
+      - name: Build
+        run: ./scripts/build.sh
+
+      - name: Verify artifact
+        run: |
+          python3 - <<'PY'
+          import struct, sys
+          p = "out/UefiPayloadPkg.efi"
+          d = open(p, "rb").read()
+          assert d[:2] == b"MZ", "not an MZ/PE image"
+          off = struct.unpack_from("<I", d, 0x3C)[0]
+          assert d[off:off+4] == b"PE\x00\x00", "missing PE signature"
+          machine = struct.unpack_from("<H", d, off+4)[0]
+          opt    = struct.unpack_from("<H", d, off+24)[0]
+          subsys = struct.unpack_from("<H", d, off+92)[0]
+          print(f"size     : {len(d)} bytes")
+          print(f"machine  : 0x{machine:04x}")
+          print(f"opt magic: 0x{opt:04x}")
+          print(f"subsystem: {subsys}")
+          assert machine == 0xAA64, "expected AArch64 (0xAA64)"
+          assert opt == 0x20B, "expected PE32+"
+          assert subsys == 10, "expected EFI_APPLICATION (10)"
+          print("PE/COFF validation OK")
+          PY
+
+      - name: Upload payload
+        uses: actions/upload-artifact@v4
+        with:
+          name: UefiPayloadPkg-AARCH64
+          path: |
+            out/UefiPayloadPkg.efi
+            build.log
+          if-no-files-found: error
+          retention-days: 30

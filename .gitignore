@@ -1,0 +1,19 @@
+# edk2 is fetched by CI at a pinned SHA; never commit it
+/edk2/
+
+# build output
+/Build/
+/out/
+/Conf/
+build.log
+build-basetools.log
+
+# scratch space for images and round-trip tests
+/work/
+*.img
+*.efi
+*.bin
+
+# python
+__pycache__/
+*.pyc
