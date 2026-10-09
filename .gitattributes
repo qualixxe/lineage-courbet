@@ -1,0 +1,24 @@
+# Normalize to LF on checkout. Windows checkouts must not produce CRLF in
+# scripts that are executed by the Linux CI runner - a CRLF in build.sh gives
+# "bad interpreter: /usr/bin/env bash^M".
+* text=auto eol=lf
+
+*.sh  text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.py  text eol=lf
+
+# edk2 build inputs
+*.dsc text eol=lf
+*.fdf text eol=lf
+*.inf text eol=lf
+*.dec text eol=lf
+*.dsc.inc text eol=lf
+*.asl text eol=lf
+*.asm text eol=lf
+
+# Keep these binary-ish types untouched.
+*.img binary
+*.efi binary
+*.bin binary
+*.patch -text
