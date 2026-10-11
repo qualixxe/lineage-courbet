@@ -51,10 +51,17 @@ jobs:
             python3 python3-pip repo
           git lfs install || true
 
+      - name: Install latest repo launcher (Ubuntu's repo pkg is too old)
+        run: |
+          curl -fsSL https://storage.googleapis.com/git-repo-downloads/repo > /tmp/repo
+          chmod +x /tmp/repo
+          sudo install -m 0755 /tmp/repo /usr/local/bin/repo
+          repo --version || true
+
       - name: repo init
         run: |
           mkdir -p "$GITHUB_WORKSPACE/aosp" && cd "$GITHUB_WORKSPACE/aosp"
-          repo init --depth=1 -u https://github.com/LineageOS/android.git -b "$LINEAGE_BRANCH" --git-lfs
+          repo init --depth=1 -u https://github.com/LineageOS/android.git -b "$LINEAGE_BRANCH"
 
       - name: Install local manifest
         run: |

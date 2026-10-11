@@ -1,0 +1,108 @@
+name: Build courbet stock kernel (HyperOS/MIUI)
+
+on:
+  workflow_dispatch:
+    inputs:
+      defconfig:
+        description: 'Defconfig'
+        required: false
+        default: 'courbet_user_defconfig'
+
+# Lightweight job: stock 4.14 Xiaomi kernel for courbet (Mi 11 Lite 4G),
+# meant to boot HyperOS/MIUI stock ROMs. Result is an AnyKernel3 flashable zip.
+# Source: MiCode/Xiaomi_Kernel_OpenSource @ courbet-r-oss.
+
+concurrency:
+  group: kernel-courbet-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+
+    env:
+      KERNEL_REPO: https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git
+      KERNEL_BRANCH: courbet-r-oss
+      CLANG_URL: https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android-11.0.0_r46/clang-r383902b.tar.gz
+      GCC64_URL: https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/refs/heads/android-11.0.0_r46.tar.gz
+      GCC32_URL: https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9/+archive/refs/heads/android-11.0.0_r46.tar.gz
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential bc bison flex libssl-dev libelf-dev libncurses-dev \
+            cpio dwarves python3 git wget curl zip unzip gcc-aarch64-linux-gnu
+
+      - name: Clone kernel (shallow, single branch)
+        run: |
+          git clone --depth 1 --single-branch --branch "$KERNEL_BRANCH" "$KERNEL_REPO" kernel
+          cd kernel
+          git rev-parse --short HEAD
+          test -f arch/arm64/configs/${{ inputs.defconfig }} || { echo "defconfig missing"; ls arch/arm64/configs/ | head; exit 1; }
+
+      - name: Fetch toolchains
+        run: |
+          mkdir -p toolchains && cd toolchains
+          mkdir clang gcc64 gcc32
+          curl -L "$CLANG_URL" -o clang.tar.gz
+          tar -xf clang.tar.gz -C clang
+          curl -L "$GCC64_URL" -o gcc64.tar.gz
+          tar -xf gcc64.tar.gz -C gcc64
+          curl -L "$GCC32_URL" -o gcc32.tar.gz
+          tar -xf gcc32.tar.gz -C gcc32
+          ./clang/bin/clang --version | head -2
+          ls gcc64/bin/aarch64-linux-android- 2>/dev/null || ls gcc64/bin/ | head
+
+      - name: Build
+        working-directory: kernel
+        run: |
+          export ARCH=arm64 SUBARCH=arm64
+          export PATH="$GITHUB_WORKSPACE/toolchains/clang/bin:$PATH"
+          make O=out ARCH=arm64 ${{ inputs.defconfig }}
+          make -j$(nproc) O=out ARCH=arm64 \
+            CC=clang \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE="$GITHUB_WORKSPACE/toolchains/gcc64/bin/aarch64-linux-android-" \
+            CROSS_COMPILE_ARM32="$GITHUB_WORKSPACE/toolchains/gcc32/bin/arm-linux-androideabi-" \
+            2>&1 | tee "$GITHUB_WORKSPACE/build-kernel.log"
+          echo "--- outputs ---"
+          ls -lh out/arch/arm64/boot/
+
+      - name: Package AnyKernel3
+        run: |
+          git clone --depth 1 https://github.com/osm0sis/AnyKernel3.git ak3
+          IMG=""
+          if [ -f kernel/out/arch/arm64/boot/Image.gz-dtb ]; then IMG="Image.gz-dtb";
+          elif [ -f kernel/out/arch/arm64/boot/Image.gz ]; then IMG="Image.gz";
+          elif [ -f kernel/out/arch/arm64/boot/Image ]; then IMG="Image";
+          else echo "no kernel image found"; ls -R kernel/out/arch/arm64/boot/ | head -30; exit 1; fi
+          echo "using $IMG"
+          cp "kernel/out/arch/arm64/boot/$IMG" ak3/zImage
+          # courbet: append stock dtb handling stays in ramdisk, keep device check tight
+          sed -i 's/^device.name1=.*/device.name1=courbet/; s/^do.devicecheck=.*/do.devicecheck=1/' ak3/anykernel.sh
+          grep -n "^device.name1\|^do.devicecheck" ak3/anykernel.sh
+          # dtbo if built
+          if [ -f kernel/out/arch/arm64/boot/dtbo.img ]; then cp kernel/out/arch/arm64/boot/dtbo.img ak3/; fi
+          cd ak3 && zip -r9 ../courbet-hyperos-kernel.zip * -x .git/\*
+          cd ..
+          ls -lh courbet-hyperos-kernel.zip
+          cp "kernel/out/arch/arm64/boot/$IMG" ./kernel-image-"$IMG"
+
+      - name: Upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: courbet-hyperos-kernel
+          path: |
+            courbet-hyperos-kernel.zip
+            kernel-image-*
+            build-kernel.log
+          if-no-files-found: warn
+          retention-days: 30
