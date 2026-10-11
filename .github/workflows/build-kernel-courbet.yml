@@ -24,9 +24,13 @@ jobs:
     env:
       KERNEL_REPO: https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git
       KERNEL_BRANCH: courbet-r-oss
-      CLANG_URL: https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android-11.0.0_r46/clang-r383902b.tar.gz
-      GCC64_URL: https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/refs/heads/android-11.0.0_r46.tar.gz
-      GCC32_URL: https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9/+archive/refs/heads/android-11.0.0_r46.tar.gz
+      # LineageOS mirrors on GitHub (googlesource +archive refs are dead):
+      # clang 12 r416183b = stock kernel clang for 4.14/4.19 era
+      CLANG_REPO: https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b.git
+      CLANG_BRANCH: lineage-20.0
+      GCC64_REPO: https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git
+      GCC32_REPO: https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9.git
+      GCC_BRANCH: lineage-19.1
 
     steps:
       - uses: actions/checkout@v4
@@ -49,16 +53,12 @@ jobs:
 
       - name: Fetch toolchains
         run: |
-          mkdir -p toolchains && cd toolchains
-          mkdir clang gcc64 gcc32
-          curl -L "$CLANG_URL" -o clang.tar.gz
-          tar -xf clang.tar.gz -C clang
-          curl -L "$GCC64_URL" -o gcc64.tar.gz
-          tar -xf gcc64.tar.gz -C gcc64
-          curl -L "$GCC32_URL" -o gcc32.tar.gz
-          tar -xf gcc32.tar.gz -C gcc32
-          ./clang/bin/clang --version | head -2
-          ls gcc64/bin/aarch64-linux-android- 2>/dev/null || ls gcc64/bin/ | head
+          git clone --depth 1 --single-branch --branch "$CLANG_BRANCH" "$CLANG_REPO" toolchains/clang
+          git clone --depth 1 --single-branch --branch "$GCC_BRANCH" "$GCC64_REPO" toolchains/gcc64
+          git clone --depth 1 --single-branch --branch "$GCC_BRANCH" "$GCC32_REPO" toolchains/gcc32
+          ./toolchains/clang/bin/clang --version | head -2
+          ls toolchains/gcc64/bin/ | head -3
+          ls toolchains/gcc32/bin/ | head -3
 
       - name: Build
         working-directory: kernel
