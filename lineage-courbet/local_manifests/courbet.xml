@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<manifest>
+  <!-- Unofficial LineageOS 22.2 (Android 15 QPR2) for Xiaomi Mi 11 Lite 4G (courbet) -->
+  <!-- Base: LineageOS/android.git @ lineage-22.2, device trees: abdalrahmaneissa -->
+
+  <remote name="github" fetch="https://github.com" />
+
+  <!-- Device trees (only branch available upstream is `lineage`) -->
+  <project name="abdalrahmaneissa/android_device_xiaomi_courbet"
+           path="device/xiaomi/courbet"
+           remote="github" revision="lineage" clone-depth="1" />
+  <project name="abdalrahmaneissa/android_device_xiaomi_sm6150-common"
+           path="device/xiaomi/sm6150-common"
+           remote="github" revision="lineage" clone-depth="1" />
+
+  <!-- Vendors: courbet blobs only exist on `main`, sm6150-common on TheMuppets -->
+  <project name="abdalrahmaneissa/proprietary_vendor_xiaomi_courbet"
+           path="vendor/xiaomi/courbet"
+           remote="github" revision="main" clone-depth="1" />
+  <project name="TheMuppets/proprietary_vendor_xiaomi_sm6150-common"
+           path="vendor/xiaomi/sm6150-common"
+           remote="github" revision="lineage-22.2" clone-depth="1" />
+
+  <!-- Kernel: upstream has no kernel/xiaomi/courbet repo, use Lineage sm6150
+       lineage-22.2 as best-effort. Workflow patches courbet_defconfig if missing. -->
+  <project name="LineageOS/android_kernel_xiaomi_sm6150"
+           path="kernel/xiaomi/courbet"
+           remote="github" revision="lineage-22.2" clone-depth="1" />
+
+  <!-- hardware/xiaomi required by lineage.dependencies -->
+  <project name="LineageOS/android_hardware_xiaomi"
+           path="hardware/xiaomi"
+           remote="github" revision="lineage-22.2" clone-depth="1" />
+</manifest>

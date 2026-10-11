@@ -1,0 +1,111 @@
+name: Build LineageOS 22.2 unofficial (courbet)
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Build type (userdebug/eng)'
+        required: false
+        default: 'userdebug'
+
+# Full Lineage sync+build needs far more than the default runner disk/RAM.
+# This workflow frees space first, but success is NOT guaranteed:
+# expect ~100 GB sync, several hours build, possible OOM/timeout on free runners.
+concurrency:
+  group: lineage-courbet-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+
+    env:
+      LINEAGE_BRANCH: lineage-22.2
+      DEVICE: courbet
+      # Shallow, filtered sync to fit the runner
+      REPO_SYNC_FLAGS: -c --force-sync --no-clone-bundle --no-tags --optimized-fetch --prune -j4
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # we only need our manifests/scripts, not full history
+          fetch-depth: 1
+
+      - name: Free disk space
+        run: |
+          df -h
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          sudo docker image prune --all --force || true
+          sudo apt-get clean
+          df -h
+
+      - name: Install build deps (Lineage wiki)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc bison build-essential ccache curl flex g++-multilib gcc-multilib \
+            git git-lfs gnupg gperf imagemagick lib32readline-dev lib32z1-dev \
+            libelf-dev liblz4-tool libsdl1.2-dev libssl-dev libxml2 libxml2-utils \
+            lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev \
+            python3 python3-pip repo
+          git lfs install || true
+
+      - name: repo init
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/aosp" && cd "$GITHUB_WORKSPACE/aosp"
+          repo init --depth=1 -u https://github.com/LineageOS/android.git -b "$LINEAGE_BRANCH" --git-lfs
+
+      - name: Install local manifest
+        run: |
+          mkdir -p aosp/.repo/local_manifests
+          cp lineage-courbet/local_manifests/courbet.xml aosp/.repo/local_manifests/courbet.xml
+          cat aosp/.repo/local_manifests/courbet.xml
+          python3 -c "import xml.dom.minidom; xml.dom.minidom.parse('aosp/.repo/local_manifests/courbet.xml'); print('manifest XML OK')"
+
+      - name: repo sync
+        working-directory: aosp
+        run: |
+          repo sync ${{ env.REPO_SYNC_FLAGS }} || repo sync ${{ env.REPO_SYNC_FLAGS }} -j2
+          df -h
+          du -sh .repo 2>/dev/null || true
+
+      - name: Preflight (deps/vendor/kernel checks + workarounds)
+        working-directory: aosp
+        run: |
+          cp "$GITHUB_WORKSPACE/lineage-courbet/scripts/preflight.sh" ./preflight.sh
+          chmod +x ./preflight.sh
+          ./preflight.sh
+          echo "--- breakfast deps resolve ---"
+          source build/envsetup.sh
+          # validates lineage.dependencies without starting the build
+          breakfast courbet userdebug || breakfast lineage_courbet-userdebug || true
+
+      - name: Build
+        working-directory: aosp
+        run: |
+          source build/envsetup.sh
+          lunch lineage_courbet-${{ inputs.build_type }}
+          # low-ish parallelism to survive 14 GB RAM runners
+          mka bacon -j$(nproc) 2>&1 | tee "$GITHUB_WORKSPACE/build-courbet.log"
+          echo "--- out ---"
+          ls -lh out/target/product/courbet/ || true
+
+      - name: Upload ROM + recovery
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lineage-22.2-courbet-unofficial
+          path: |
+            aosp/out/target/product/courbet/lineage-*.zip
+            aosp/out/target/product/courbet/recovery.img
+            aosp/out/target/product/courbet/boot.img
+            build-courbet.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Disk/build summary
+        if: always()
+        run: |
+          df -h
+          tail -100 build-courbet.log || true
